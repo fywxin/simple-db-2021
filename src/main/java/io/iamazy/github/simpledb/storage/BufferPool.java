@@ -8,8 +8,11 @@ import io.iamazy.github.simpledb.transaction.TransactionAbortedException;
 import io.iamazy.github.simpledb.transaction.TransactionId;
 
 import java.io.*;
-
+import java.util.Iterator;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Semaphore;
+
 
 /**
  * BufferPool manages the reading and writing of pages into memory from
@@ -19,18 +22,26 @@ import java.util.concurrent.ConcurrentHashMap;
  * The BufferPool is also responsible for locking;  when a transaction fetches
  * a page, BufferPool checks that the transaction has the appropriate
  * locks to read/write the page.
- * 
+ *
  * @Threadsafe, all fields are final
  */
 public class BufferPool {
-    /** Bytes per page, including header. */
+    /**
+     * Bytes per page, including header.
+     */
     private static final int DEFAULT_PAGE_SIZE = 4096;
 
     private static int pageSize = DEFAULT_PAGE_SIZE;
-    
-    /** Default number of pages passed to the constructor. This is used by
-    other classes. BufferPool should use the numPages argument to the
-    constructor instead. */
+
+    private final Map<PageId, Page> pages;
+    private final Map<PageId, Semaphore> pageSemaphores;
+    private final int numPages;
+
+    /**
+     * Default number of pages passed to the constructor. This is used by
+     * other classes. BufferPool should use the numPages argument to the
+     * constructor instead.
+     */
     public static final int DEFAULT_PAGES = 50;
 
     /**
@@ -40,20 +51,23 @@ public class BufferPool {
      */
     public BufferPool(int numPages) {
         // some code goes here
+        pages = new ConcurrentHashMap<>(numPages);
+        pageSemaphores = new ConcurrentHashMap<>();
+        this.numPages = numPages;
     }
-    
+
     public static int getPageSize() {
-      return pageSize;
+        return pageSize;
     }
-    
+
     // THIS FUNCTION SHOULD ONLY BE USED FOR TESTING!!
     public static void setPageSize(int pageSize) {
-    	BufferPool.pageSize = pageSize;
+        BufferPool.pageSize = pageSize;
     }
-    
+
     // THIS FUNCTION SHOULD ONLY BE USED FOR TESTING!!
     public static void resetPageSize() {
-    	BufferPool.pageSize = DEFAULT_PAGE_SIZE;
+        BufferPool.pageSize = DEFAULT_PAGE_SIZE;
     }
 
     /**
@@ -67,13 +81,53 @@ public class BufferPool {
      * space in the buffer pool, a page should be evicted and the new page
      * should be added in its place.
      *
-     * @param tid the ID of the transaction requesting the page
-     * @param pid the ID of the requested page
+     * @param tid  the ID of the transaction requesting the page
+     * @param pid  the ID of the requested page
      * @param perm the requested permissions on the page
      */
-    public  Page getPage(TransactionId tid, PageId pid, Permissions perm)
-        throws TransactionAbortedException, DbException {
+    public Page getPage(TransactionId tid, PageId pid, Permissions perm)
+            throws TransactionAbortedException, DbException {
         // some code goes here
+        if (pages.containsKey(pid)) {
+            Semaphore semaphore = pageSemaphores.get(pid);
+            try {
+                // TODO: when release page, release semaphore
+                semaphore.acquire();
+            } catch (InterruptedException e) {
+                throw new TransactionAbortedException();
+            }
+            Page page = pages.get(pid);
+            if (perm == Permissions.READ_WRITE) {
+                // TODO: when release page, mark dirty to false
+                page.markDirty(true, tid);
+            }
+            return page;
+        } else {
+            Page page = Database.getCatalog().getDatabaseFile(pid.getTableId()).readPage(pid);
+            if (page != null) {
+                // TODO: eviction policy
+                if (pages.size() >= numPages) {
+                    Iterator<Map.Entry<PageId, Page>> iterator = pages.entrySet().iterator();
+                    // FIXME: remove an entry randomly, may remove nothing
+                    while (iterator.hasNext()) {
+                        Map.Entry<PageId, Page> entry = iterator.next();
+                        Semaphore semaphore = pageSemaphores.get(entry.getKey());
+                        if (semaphore.tryAcquire()) {
+                            iterator.remove();
+                            semaphore.release();
+                            pageSemaphores.remove(entry.getKey());
+                            break;
+                        }
+                    }
+                }
+                pages.put(pid, page);
+                pageSemaphores.put(pid, new Semaphore(1));
+                if (perm == Permissions.READ_WRITE) {
+                    page.markDirty(true, tid);
+                }
+                return page;
+            }
+        }
         return null;
     }
 
@@ -86,7 +140,7 @@ public class BufferPool {
      * @param tid the ID of the transaction requesting the unlock
      * @param pid the ID of the page to unlock
      */
-    public  void unsafeReleasePage(TransactionId tid, PageId pid) {
+    public void unsafeReleasePage(TransactionId tid, PageId pid) {
         // some code goes here
         // not necessary for lab1|lab2
     }
@@ -101,7 +155,9 @@ public class BufferPool {
         // not necessary for lab1|lab2
     }
 
-    /** Return true if the specified transaction has a lock on the specified page */
+    /**
+     * Return true if the specified transaction has a lock on the specified page
+     */
     public boolean holdsLock(TransactionId tid, PageId p) {
         // some code goes here
         // not necessary for lab1|lab2
@@ -112,7 +168,7 @@ public class BufferPool {
      * Commit or abort a given transaction; release all locks associated to
      * the transaction.
      *
-     * @param tid the ID of the transaction requesting the unlock
+     * @param tid    the ID of the transaction requesting the unlock
      * @param commit a flag indicating whether we should commit or abort
      */
     public void transactionComplete(TransactionId tid, boolean commit) {
@@ -122,21 +178,21 @@ public class BufferPool {
 
     /**
      * Add a tuple to the specified table on behalf of transaction tid.  Will
-     * acquire a write lock on the page the tuple is added to and any other 
-     * pages that are updated (Lock acquisition is not needed for lab2). 
+     * acquire a write lock on the page the tuple is added to and any other
+     * pages that are updated (Lock acquisition is not needed for lab2).
      * May block if the lock(s) cannot be acquired.
-     * 
+     * <p>
      * Marks any pages that were dirtied by the operation as dirty by calling
-     * their markDirty bit, and adds versions of any pages that have 
-     * been dirtied to the cache (replacing any existing versions of those pages) so 
-     * that future requests see up-to-date pages. 
+     * their markDirty bit, and adds versions of any pages that have
+     * been dirtied to the cache (replacing any existing versions of those pages) so
+     * that future requests see up-to-date pages.
      *
-     * @param tid the transaction adding the tuple
+     * @param tid     the transaction adding the tuple
      * @param tableId the table to add the tuple to
-     * @param t the tuple to add
+     * @param t       the tuple to add
      */
     public void insertTuple(TransactionId tid, int tableId, Tuple t)
-        throws DbException, IOException, TransactionAbortedException {
+            throws DbException, IOException, TransactionAbortedException {
         // some code goes here
         // not necessary for lab1
     }
@@ -145,17 +201,17 @@ public class BufferPool {
      * Remove the specified tuple from the buffer pool.
      * Will acquire a write lock on the page the tuple is removed from and any
      * other pages that are updated. May block if the lock(s) cannot be acquired.
-     *
+     * <p>
      * Marks any pages that were dirtied by the operation as dirty by calling
-     * their markDirty bit, and adds versions of any pages that have 
-     * been dirtied to the cache (replacing any existing versions of those pages) so 
-     * that future requests see up-to-date pages. 
+     * their markDirty bit, and adds versions of any pages that have
+     * been dirtied to the cache (replacing any existing versions of those pages) so
+     * that future requests see up-to-date pages.
      *
      * @param tid the transaction deleting the tuple.
-     * @param t the tuple to delete
+     * @param t   the tuple to delete
      */
-    public  void deleteTuple(TransactionId tid, Tuple t)
-        throws DbException, IOException, TransactionAbortedException {
+    public void deleteTuple(TransactionId tid, Tuple t)
+            throws DbException, IOException, TransactionAbortedException {
         // some code goes here
         // not necessary for lab1
     }
@@ -163,7 +219,7 @@ public class BufferPool {
     /**
      * Flush all dirty pages to disk.
      * NB: Be careful using this routine -- it writes dirty data to disk so will
-     *     break io.iamazy.github.simpledb if running in NO STEAL mode.
+     * break io.iamazy.github.simpledb if running in NO STEAL mode.
      */
     public synchronized void flushAllPages() throws IOException {
         // some code goes here
@@ -171,14 +227,15 @@ public class BufferPool {
 
     }
 
-    /** Remove the specific page id from the buffer pool.
-        Needed by the recovery manager to ensure that the
-        buffer pool doesn't keep a rolled back page in its
-        cache.
-        
-        Also used by B+ tree files to ensure that deleted pages
-        are removed from the cache so they can be reused safely
-    */
+    /**
+     * Remove the specific page id from the buffer pool.
+     * Needed by the recovery manager to ensure that the
+     * buffer pool doesn't keep a rolled back page in its
+     * cache.
+     * <p>
+     * Also used by B+ tree files to ensure that deleted pages
+     * are removed from the cache so they can be reused safely
+     */
     public synchronized void discardPage(PageId pid) {
         // some code goes here
         // not necessary for lab1
@@ -186,16 +243,18 @@ public class BufferPool {
 
     /**
      * Flushes a certain page to disk
+     *
      * @param pid an ID indicating the page to flush
      */
-    private synchronized  void flushPage(PageId pid) throws IOException {
+    private synchronized void flushPage(PageId pid) throws IOException {
         // some code goes here
         // not necessary for lab1
     }
 
-    /** Write all pages of the specified transaction to disk.
+    /**
+     * Write all pages of the specified transaction to disk.
      */
-    public synchronized  void flushPages(TransactionId tid) throws IOException {
+    public synchronized void flushPages(TransactionId tid) throws IOException {
         // some code goes here
         // not necessary for lab1|lab2
     }
@@ -204,7 +263,7 @@ public class BufferPool {
      * Discards a page from the buffer pool.
      * Flushes the page to disk to ensure dirty pages are updated on disk.
      */
-    private synchronized  void evictPage() throws DbException {
+    private synchronized void evictPage() throws DbException {
         // some code goes here
         // not necessary for lab1
     }
