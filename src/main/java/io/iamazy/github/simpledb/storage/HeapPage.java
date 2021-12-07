@@ -75,8 +75,7 @@ public class HeapPage implements Page {
      */
     private int getNumTuples() {
         // some code goes here
-        return (int) Math.floor((BufferPool.getPageSize() * 8) / (double) (tuples.length * 8 + 1));
-
+        return (BufferPool.getPageSize() * 8) / (td.getSize() * 8 + 1);
     }
 
     /**
@@ -85,10 +84,8 @@ public class HeapPage implements Page {
      * @return the number of bytes in the header of a page in a HeapFile with each tuple occupying tupleSize bytes
      */
     private int getHeaderSize() {
-//ceiling(no. tuple slots / 8)
         // some code goes here
-        return (int) Math.ceil(getNumTuples() / (double) 8);
-
+        return (int) Math.ceil(getNumTuples() / 8.0);
     }
 
     /**
@@ -293,7 +290,20 @@ public class HeapPage implements Page {
      */
     public int getNumEmptySlots() {
         // some code goes here
-        return 0;
+        int total = 0;
+        for (byte b : header) {
+            total += countOne(b);
+        }
+        return header.length * 8 - total;
+    }
+
+    private int countOne(byte num) {
+        int count = 0;
+        while (num != 0) {
+            num &= (num - 1);
+            count++;
+        }
+        return count;
     }
 
     /**
@@ -301,7 +311,12 @@ public class HeapPage implements Page {
      */
     public boolean isSlotUsed(int i) {
         // some code goes here
-        return false;
+        if (i < 0 || i > getHeaderSize() * 8 - 1) {
+            throw new NoSuchElementException("slot index " + i + " is invalid");
+        }
+        int arrayIndex = i / 8;
+        int bitIndex = i % 8;
+        return (header[arrayIndex] & (1 << bitIndex)) != 0;
     }
 
     /**
@@ -318,7 +333,7 @@ public class HeapPage implements Page {
      */
     public Iterator<Tuple> iterator() {
         // some code goes here
-        return Arrays.stream(tuples).iterator();
+        return Arrays.stream(tuples).filter(Objects::nonNull).iterator();
     }
 
 }
