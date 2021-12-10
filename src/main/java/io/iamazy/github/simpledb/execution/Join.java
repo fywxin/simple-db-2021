@@ -1,6 +1,5 @@
 package io.iamazy.github.simpledb.execution;
 
-import io.iamazy.github.simpledb.storage.Field;
 import io.iamazy.github.simpledb.transaction.TransactionAbortedException;
 import io.iamazy.github.simpledb.common.DbException;
 import io.iamazy.github.simpledb.storage.Tuple;
@@ -18,6 +17,7 @@ public class Join extends Operator {
     private final JoinPredicate predicate;
     private OpIterator child1;
     private OpIterator child2;
+    private Tuple curChild1 = null;
 
     /**
      * Constructor. Accepts two children to join and the predicate to join them
@@ -107,20 +107,29 @@ public class Join extends Operator {
      */
     protected Tuple fetchNext() throws TransactionAbortedException, DbException {
         // some code goes here
-        while (child1.hasNext()) {
-            Tuple next1 = child1.next();
+        if (curChild1 == null && child1.hasNext()) {
+            curChild1 = child1.next();
+        }
+
+        while (curChild1 != null) {
             while (child2.hasNext()) {
                 Tuple next2 = child2.next();
-                if (predicate.filter(next1, next2)) {
+                if (predicate.filter(curChild1, next2)) {
                     Tuple tuple = new Tuple(getTupleDesc());
                     for (int i = 0; i < child1.getTupleDesc().numFields(); i++) {
-                        tuple.setField(i, next1.getField(i));
+                        tuple.setField(i, curChild1.getField(i));
                     }
                     for (int i = 0; i < child2.getTupleDesc().numFields(); i++) {
                         tuple.setField(child1.getTupleDesc().numFields() + i, next2.getField(i));
                     }
                     return tuple;
                 }
+            }
+            if (child1.hasNext()) {
+                curChild1 = child1.next();
+                child2.rewind();
+            } else {
+                curChild1 = null;
             }
         }
         return null;
