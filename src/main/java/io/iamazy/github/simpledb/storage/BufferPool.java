@@ -34,7 +34,6 @@ public class BufferPool {
     private static int pageSize = DEFAULT_PAGE_SIZE;
 
     private final Map<PageId, Page> pages;
-    private final Map<PageId, Semaphore> pageSemaphores;
     private final int numPages;
 
     /**
@@ -52,7 +51,6 @@ public class BufferPool {
     public BufferPool(int numPages) {
         // some code goes here
         pages = new ConcurrentHashMap<>(numPages);
-        pageSemaphores = new ConcurrentHashMap<>();
         this.numPages = numPages;
     }
 
@@ -89,13 +87,6 @@ public class BufferPool {
             throws TransactionAbortedException, DbException {
         // some code goes here
         if (pages.containsKey(pid)) {
-            Semaphore semaphore = pageSemaphores.get(pid);
-            try {
-                // TODO: when release page, release semaphore
-                semaphore.acquire();
-            } catch (InterruptedException e) {
-                throw new TransactionAbortedException();
-            }
             Page page = pages.get(pid);
             if (perm == Permissions.READ_WRITE) {
                 // TODO: when release page, mark dirty to false
@@ -107,21 +98,9 @@ public class BufferPool {
             if (page != null) {
                 // TODO: eviction policy
                 if (pages.size() >= numPages) {
-                    Iterator<Map.Entry<PageId, Page>> iterator = pages.entrySet().iterator();
-                    // FIXME: remove an entry randomly, may remove nothing
-                    while (iterator.hasNext()) {
-                        Map.Entry<PageId, Page> entry = iterator.next();
-                        Semaphore semaphore = pageSemaphores.get(entry.getKey());
-                        if (semaphore.tryAcquire()) {
-                            iterator.remove();
-                            semaphore.release();
-                            pageSemaphores.remove(entry.getKey());
-                            break;
-                        }
-                    }
+                    throw new DbException("pages buffer is full");
                 }
                 pages.put(pid, page);
-                pageSemaphores.put(pid, new Semaphore(1));
                 if (perm == Permissions.READ_WRITE) {
                     page.markDirty(true, tid);
                 }
