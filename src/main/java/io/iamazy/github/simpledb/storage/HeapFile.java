@@ -103,6 +103,22 @@ public class HeapFile implements DbFile {
     public void writePage(Page page) throws IOException {
         // some code goes here
         // not necessary for lab1
+        RandomAccessFile raf = null;
+        try {
+            raf = new RandomAccessFile(file, "rw");
+            raf.seek((long) page.getId().getPageNumber() * BufferPool.getPageSize());
+            raf.write(page.getPageData());
+        } catch (IOException e) {
+            Debug.log(e.getMessage());
+        } finally {
+            try {
+                if (raf != null) {
+                    raf.close();
+                }
+            } catch (IOException e) {
+                Debug.log(e.getMessage());
+            }
+        }
     }
 
     /**
@@ -117,7 +133,28 @@ public class HeapFile implements DbFile {
     public List<Page> insertTuple(TransactionId tid, Tuple t)
             throws DbException, IOException, TransactionAbortedException {
         // some code goes here
-        return null;
+        if (!t.getTupleDesc().equals(td)) {
+            throw new DbException("tupleDesc is mismatch");
+        }
+        int pageNum = numPages();
+        for (int i = 0; i < pageNum; i++) {
+            PageId pageId = new HeapPageId(tableId, i);
+            Page page = Database.getBufferPool().getPage(tid, pageId, Permissions.READ_WRITE);
+            if (page != null) {
+                HeapPage heapPage = (HeapPage) page;
+                if (heapPage.getNumEmptySlots() > 0) {
+                    heapPage.insertTuple(t);
+                    heapPage.markDirty(true, tid);
+                    return Collections.singletonList(heapPage);
+                }
+            }
+        }
+        HeapPageId pageId = new HeapPageId(tableId, numPages());
+        HeapPage heapPage = new HeapPage(pageId, HeapPage.createEmptyPageData());
+        heapPage.insertTuple(t);
+        heapPage.markDirty(true, tid);
+        writePage(heapPage);
+        return Collections.singletonList(heapPage);
         // not necessary for lab1
     }
 
@@ -125,7 +162,14 @@ public class HeapFile implements DbFile {
     public ArrayList<Page> deleteTuple(TransactionId tid, Tuple t) throws DbException,
             TransactionAbortedException {
         // some code goes here
-        return null;
+        if (t.getRecordId().getPageId().getTableId() != tableId) {
+            throw new DbException("the tuple is not belong to this table.");
+        }
+        PageId pageId = t.getRecordId().getPageId();
+        HeapPage page = (HeapPage) Database.getBufferPool().getPage(tid, pageId, Permissions.READ_WRITE);
+        page.deleteTuple(t);
+        page.markDirty(true, tid);
+        return new ArrayList<>(Collections.singletonList(page));
         // not necessary for lab1
     }
 

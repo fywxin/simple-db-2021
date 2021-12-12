@@ -114,7 +114,7 @@ public class Catalog {
         if (tables.containsKey(tableId)) {
             return tables.get(tableId).dbFile;
         } else {
-            throw new NoSuchElementException("table: " + tableId + "is not found");
+            throw new NoSuchElementException("table: " + tableId + " is not found");
         }
     }
 

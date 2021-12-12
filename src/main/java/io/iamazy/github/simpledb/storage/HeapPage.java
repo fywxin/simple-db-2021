@@ -4,6 +4,7 @@ import io.iamazy.github.simpledb.common.Database;
 import io.iamazy.github.simpledb.common.DbException;
 import io.iamazy.github.simpledb.common.Debug;
 import io.iamazy.github.simpledb.common.Catalog;
+import io.iamazy.github.simpledb.common.Permissions;
 import io.iamazy.github.simpledb.transaction.TransactionId;
 
 import java.util.*;
@@ -23,6 +24,9 @@ public class HeapPage implements Page {
     final byte[] header;
     final Tuple[] tuples;
     final int numSlots;
+    // TODO: check permission
+    private Permissions permissions;
+    private TransactionId tid = null;
 
     byte[] oldData;
     private final Byte oldDataLock = (byte) 0;
@@ -252,6 +256,15 @@ public class HeapPage implements Page {
     public void deleteTuple(Tuple t) throws DbException {
         // some code goes here
         // not necessary for lab1
+        if (!t.getRecordId().getPageId().equals(pid)) {
+            throw new DbException("the tuple is not on page :" + pid);
+        }
+        int tupleIdx = t.getRecordId().getTupleNumber();
+        if (!isSlotUsed(tupleIdx)) {
+            throw new DbException("the tuple slot is already empty.");
+        }
+        tuples[tupleIdx] = null;
+        markSlotUsed(tupleIdx, false);
     }
 
     /**
@@ -265,6 +278,22 @@ public class HeapPage implements Page {
     public void insertTuple(Tuple t) throws DbException {
         // some code goes here
         // not necessary for lab1
+        if (!t.getTupleDesc().equals(td)) {
+            throw new DbException("tupleDesc is mismatch.");
+        }
+        if (getNumEmptySlots() > 0) {
+            for (int i = 0; i < tuples.length; i++) {
+                if (!isSlotUsed(i)) {
+                    RecordId recordId = new RecordId(pid, i);
+                    t.setRecordId(recordId);
+                    tuples[i] = t;
+                    markSlotUsed(i, true);
+                    return;
+                }
+            }
+        } else {
+            throw new DbException("heapPage is full.");
+        }
     }
 
     /**
@@ -274,6 +303,11 @@ public class HeapPage implements Page {
     public void markDirty(boolean dirty, TransactionId tid) {
         // some code goes here
         // not necessary for lab1
+        if (dirty) {
+            this.tid = tid;
+        } else {
+            this.tid = null;
+        }
     }
 
     /**
@@ -282,7 +316,7 @@ public class HeapPage implements Page {
     public TransactionId isDirty() {
         // some code goes here
         // Not necessary for lab1
-        return null;
+        return tid;
     }
 
     /**
@@ -308,6 +342,8 @@ public class HeapPage implements Page {
 
     /**
      * Returns true if associated slot on this page is filled.
+     * 0 0 1 0 _ 0 0 0 0 , 0  1  0  0 _ 1  0  1 1
+     * 7 6 5 4   3 2 1 0 , 15 14 13 12  11 10 9 8
      */
     public boolean isSlotUsed(int i) {
         // some code goes here
@@ -325,6 +361,13 @@ public class HeapPage implements Page {
     private void markSlotUsed(int i, boolean value) {
         // some code goes here
         // not necessary for lab1
+        int arrayIndex = i / 8;
+        int bitIndex = i % 8;
+        if (value) {
+            header[arrayIndex] = (byte) (header[arrayIndex] | (1 << bitIndex));
+        } else {
+            header[arrayIndex] = (byte) (header[arrayIndex] & (~(1 << bitIndex)));
+        }
     }
 
     /**

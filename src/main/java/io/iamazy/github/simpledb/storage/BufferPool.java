@@ -1,6 +1,7 @@
 package io.iamazy.github.simpledb.storage;
 
 import io.iamazy.github.simpledb.common.Database;
+import io.iamazy.github.simpledb.common.Debug;
 import io.iamazy.github.simpledb.common.Permissions;
 import io.iamazy.github.simpledb.common.DbException;
 import io.iamazy.github.simpledb.common.DeadlockException;
@@ -34,6 +35,7 @@ public class BufferPool {
     private static int pageSize = DEFAULT_PAGE_SIZE;
 
     private final Map<PageId, Page> pages;
+    private final Map<PageId, Semaphore> pageSemMap;
     private final int numPages;
 
     /**
@@ -50,8 +52,9 @@ public class BufferPool {
      */
     public BufferPool(int numPages) {
         // some code goes here
-        pages = new ConcurrentHashMap<>(numPages);
         this.numPages = numPages;
+        this.pages = new ConcurrentHashMap<>(numPages);
+        this.pageSemMap = new ConcurrentHashMap<>(numPages);
     }
 
     public static int getPageSize() {
@@ -87,12 +90,19 @@ public class BufferPool {
             throws TransactionAbortedException, DbException {
         // some code goes here
         if (pages.containsKey(pid)) {
-            Page page = pages.get(pid);
-            if (perm == Permissions.READ_WRITE) {
-                // TODO: when release page, mark dirty to false
-                page.markDirty(true, tid);
+            try {
+                pageSemMap.get(pid).acquire();
+                Page page = pages.get(pid);
+                if (perm == Permissions.READ_WRITE) {
+                    // TODO: when release page, mark dirty to false
+                    page.markDirty(true, tid);
+                }
+                return page;
+            }catch (InterruptedException e) {
+                Debug.log(e.getMessage());
+            } finally {
+                pageSemMap.get(pid).release();
             }
-            return page;
         } else {
             Page page = Database.getCatalog().getDatabaseFile(pid.getTableId()).readPage(pid);
             if (page != null) {
@@ -101,6 +111,7 @@ public class BufferPool {
                     throw new DbException("pages buffer is full");
                 }
                 pages.put(pid, page);
+                pageSemMap.put(pid, new Semaphore(1));
                 if (perm == Permissions.READ_WRITE) {
                     page.markDirty(true, tid);
                 }
@@ -170,10 +181,13 @@ public class BufferPool {
      * @param tableId the table to add the tuple to
      * @param t       the tuple to add
      */
+    // TODO: add lock
     public void insertTuple(TransactionId tid, int tableId, Tuple t)
             throws DbException, IOException, TransactionAbortedException {
         // some code goes here
         // not necessary for lab1
+        DbFile dbFile = Database.getCatalog().getDatabaseFile(tableId);
+        dbFile.insertTuple(tid, t);
     }
 
     /**
@@ -193,6 +207,8 @@ public class BufferPool {
             throws DbException, IOException, TransactionAbortedException {
         // some code goes here
         // not necessary for lab1
+        DbFile dbFile = Database.getCatalog().getDatabaseFile(t.getRecordId().getPageId().getTableId());
+        dbFile.deleteTuple(tid, t);
     }
 
     /**
