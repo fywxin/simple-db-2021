@@ -144,6 +144,9 @@ public class Join extends Operator {
     @Override
     public void setChildren(OpIterator[] children) {
         // some code goes here
+        if (children == null) {
+            return;
+        }
         if (children.length == 1) {
             child1 = children[0];
         } else if (children.length >= 2) {

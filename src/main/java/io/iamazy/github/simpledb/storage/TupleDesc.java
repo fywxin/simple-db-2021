@@ -64,6 +64,7 @@ public class TupleDesc implements Serializable {
      * @param fieldAr array specifying the names of the fields. Note that names may
      *                be null.
      */
+    // TODO: NullPointer check
     public TupleDesc(Type[] typeAr, String[] fieldAr) {
         // some code goes here
         fields = new ArrayList<>(typeAr.length);
