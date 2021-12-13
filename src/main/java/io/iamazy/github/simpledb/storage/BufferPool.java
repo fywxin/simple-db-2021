@@ -10,6 +10,7 @@ import io.iamazy.github.simpledb.transaction.TransactionId;
 
 import java.io.*;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Semaphore;
@@ -187,7 +188,13 @@ public class BufferPool {
         // some code goes here
         // not necessary for lab1
         DbFile dbFile = Database.getCatalog().getDatabaseFile(tableId);
-        dbFile.insertTuple(tid, t);
+        List<Page> pageList = dbFile.insertTuple(tid, t);
+        for (Page page: pageList) {
+            if (!pages.containsKey(page.getId())) {
+                pages.put(page.getId(), page);
+                pageSemMap.put(page.getId(), new Semaphore(1));
+            }
+        }
     }
 
     /**
@@ -208,7 +215,7 @@ public class BufferPool {
         // some code goes here
         // not necessary for lab1
         DbFile dbFile = Database.getCatalog().getDatabaseFile(t.getRecordId().getPageId().getTableId());
-        dbFile.deleteTuple(tid, t);
+        List<Page> pageList = dbFile.deleteTuple(tid, t);
     }
 
     /**
