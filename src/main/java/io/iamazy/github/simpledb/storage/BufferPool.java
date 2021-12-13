@@ -215,7 +215,7 @@ public class BufferPool {
         // some code goes here
         // not necessary for lab1
         DbFile dbFile = Database.getCatalog().getDatabaseFile(t.getRecordId().getPageId().getTableId());
-        List<Page> pageList = dbFile.deleteTuple(tid, t);
+        dbFile.deleteTuple(tid, t);
     }
 
     /**
