@@ -58,7 +58,13 @@ public class BufferPool {
                 .maximumSize(numPages)
                 .initialCapacity(numPages / 2)
                 .removalListener((RemovalListener<PageId, Page>) (key, value, cause) -> {
+                    // equals to BufferPool.evictPage()
                     this.pageSemMap.remove(key);
+                    try {
+                        flushPage(key);
+                    } catch (IOException e) {
+                        Debug.log(e.getMessage());
+                    }
                 })
                 .build();
     }
@@ -104,7 +110,7 @@ public class BufferPool {
                     pageIfPresent.markDirty(true, tid);
                 }
                 return pageIfPresent;
-            }catch (InterruptedException e) {
+            } catch (InterruptedException e) {
                 Debug.log(e.getMessage());
             } finally {
                 pageSemMap.get(pid).release();
@@ -190,7 +196,7 @@ public class BufferPool {
         // not necessary for lab1
         DbFile dbFile = Database.getCatalog().getDatabaseFile(tableId);
         List<Page> pageList = dbFile.insertTuple(tid, t);
-        for (Page page: pageList) {
+        for (Page page : pageList) {
             if (pageMap.getIfPresent(page.getId()) == null) {
                 pageMap.put(page.getId(), page);
                 pageSemMap.put(page.getId(), new Semaphore(1));
@@ -227,7 +233,9 @@ public class BufferPool {
     public synchronized void flushAllPages() throws IOException {
         // some code goes here
         // not necessary for lab1
-
+        for (Map.Entry<PageId, Page> entry : pageMap.asMap().entrySet()) {
+            flushPage(entry.getKey());
+        }
     }
 
     /**
@@ -242,6 +250,8 @@ public class BufferPool {
     public synchronized void discardPage(PageId pid) {
         // some code goes here
         // not necessary for lab1
+        pageMap.invalidate(pid);
+        pageSemMap.remove(pid);
     }
 
     /**
@@ -252,6 +262,11 @@ public class BufferPool {
     private synchronized void flushPage(PageId pid) throws IOException {
         // some code goes here
         // not necessary for lab1
+        Page page = pageMap.getIfPresent(pid);
+        if (page != null) {
+            Database.getCatalog().getDatabaseFile(pid.getTableId()).writePage(page);
+            page.markDirty(false, null);
+        }
     }
 
     /**
@@ -269,6 +284,8 @@ public class BufferPool {
     private synchronized void evictPage() throws DbException {
         // some code goes here
         // not necessary for lab1
+
+        // TODO: remove caffeine and implement lru policy
     }
 
 }
