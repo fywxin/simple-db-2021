@@ -1,15 +1,16 @@
 package io.iamazy.github.simpledb.storage;
 
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
+import com.github.benmanes.caffeine.cache.RemovalListener;
 import io.iamazy.github.simpledb.common.Database;
 import io.iamazy.github.simpledb.common.Debug;
 import io.iamazy.github.simpledb.common.Permissions;
 import io.iamazy.github.simpledb.common.DbException;
-import io.iamazy.github.simpledb.common.DeadlockException;
 import io.iamazy.github.simpledb.transaction.TransactionAbortedException;
 import io.iamazy.github.simpledb.transaction.TransactionId;
 
 import java.io.*;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -35,9 +36,8 @@ public class BufferPool {
 
     private static int pageSize = DEFAULT_PAGE_SIZE;
 
-    private final Map<PageId, Page> pages;
+    private final Cache<PageId, Page> pageMap;
     private final Map<PageId, Semaphore> pageSemMap;
-    private final int numPages;
 
     /**
      * Default number of pages passed to the constructor. This is used by
@@ -53,9 +53,14 @@ public class BufferPool {
      */
     public BufferPool(int numPages) {
         // some code goes here
-        this.numPages = numPages;
-        this.pages = new ConcurrentHashMap<>(numPages);
         this.pageSemMap = new ConcurrentHashMap<>(numPages);
+        this.pageMap = Caffeine.newBuilder()
+                .maximumSize(numPages)
+                .initialCapacity(numPages / 2)
+                .removalListener((RemovalListener<PageId, Page>) (key, value, cause) -> {
+                    this.pageSemMap.remove(key);
+                })
+                .build();
     }
 
     public static int getPageSize() {
@@ -90,15 +95,15 @@ public class BufferPool {
     public Page getPage(TransactionId tid, PageId pid, Permissions perm)
             throws TransactionAbortedException, DbException {
         // some code goes here
-        if (pages.containsKey(pid)) {
+        Page pageIfPresent = pageMap.getIfPresent(pid);
+        if (pageIfPresent != null) {
             try {
                 pageSemMap.get(pid).acquire();
-                Page page = pages.get(pid);
                 if (perm == Permissions.READ_WRITE) {
                     // TODO: when release page, mark dirty to false
-                    page.markDirty(true, tid);
+                    pageIfPresent.markDirty(true, tid);
                 }
-                return page;
+                return pageIfPresent;
             }catch (InterruptedException e) {
                 Debug.log(e.getMessage());
             } finally {
@@ -107,11 +112,7 @@ public class BufferPool {
         } else {
             Page page = Database.getCatalog().getDatabaseFile(pid.getTableId()).readPage(pid);
             if (page != null) {
-                // TODO: eviction policy
-                if (pages.size() >= numPages) {
-                    throw new DbException("pages buffer is full");
-                }
-                pages.put(pid, page);
+                pageMap.put(pid, page);
                 pageSemMap.put(pid, new Semaphore(1));
                 if (perm == Permissions.READ_WRITE) {
                     page.markDirty(true, tid);
@@ -190,8 +191,8 @@ public class BufferPool {
         DbFile dbFile = Database.getCatalog().getDatabaseFile(tableId);
         List<Page> pageList = dbFile.insertTuple(tid, t);
         for (Page page: pageList) {
-            if (!pages.containsKey(page.getId())) {
-                pages.put(page.getId(), page);
+            if (pageMap.getIfPresent(page.getId()) == null) {
+                pageMap.put(page.getId(), page);
                 pageSemMap.put(page.getId(), new Semaphore(1));
             }
         }
